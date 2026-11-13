@@ -1,0 +1,34 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local Python environments
+.venv/
+venv/
+env/
+mediapipe-env/
+
+# Personal recordings, local milestone snapshots, and backups
+recordings/
+milestones/
+*_backup.py
+main_before_*.py
+*.log
+
+# Machine-specific model binaries: download the MediaPipe Pose Landmarker Lite
+# model using the documented instructions and place it in models/.
+models/*.task
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.env.*
+!.env.example

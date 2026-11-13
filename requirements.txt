@@ -1,0 +1,11 @@
+# Python packages directly used by the DMS baseline.
+# Pin these to the versions in your working mediapipe-env before release.
+# If your environment uses opencv-contrib-python rather than opencv-python,
+# list that package INSTEAD (not both).
+
+mediapipe==1.1.1
+numpy==2.5.4
+opencv-contrib-python==5.0.0.93
+
+# NOTE: Orbbec/OpenNI native runtime dependencies used by src/orbbec_lib.py
+# may require separate system-level installation and are not covered by pip.

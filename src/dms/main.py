@@ -13,7 +13,7 @@ Authors:
     Jacky Zhong
     Rivka Sagi
 
-Date: November 13, 2026
+Date: November 14, 2026
 
 Description:
     Main application entry point and central controller for the
@@ -23,7 +23,7 @@ Description:
     classification logic, and the user interface. It uses an Orbbec
     Astra Pro Plus camera to acquire RGB images and depth/IR data.
 
-    Integration stage 6: landmark, attention, head-motion, depth,
+    Integration stage 7: landmark, attention, head-motion, pose-size diagnostics, depth,
     normal/strict classification, and experimental pose-plane overlap.
     MediaPipe runs once per RGB frame; the resulting landmarks are
     reused by the attention and head-motion modules. Press C to
@@ -100,6 +100,8 @@ Keyboard Controls:
     I = show infrared stream
     C = toggle NORMAL / STRICT classification policy
     O = toggle approximate RGB pose / depth-plane overlap overlay
+    Z = toggle experimental apparent pose-size diagnostics
+    A = toggle experimental motion authenticity
     Q / Esc = quit
 
 Run from src/ with:
@@ -122,6 +124,8 @@ import numpy as np
 from orbbec_lib import Context, Stream, DEPTH, IR
 
 from .landmarks import LandmarkDetector
+from .pose_size import PoseSizeAnalyzer
+from .motion_authenticity import MotionAuthenticityAnalyzer
 from .attention import HeadOrientationTracker
 from .head_motion import HeadMotionTracker
 from .depth_detection import DepthDetector
@@ -149,6 +153,8 @@ PLANES_ENABLED_BY_DEFAULT = True
 INVALID_ENABLED_BY_DEFAULT = False
 CLASSIFICATION_MODE_BY_DEFAULT = "NORMAL"  # NORMAL / STRICT; C toggles
 OVERLAP_ENABLED_BY_DEFAULT = True  # O toggles; requires F and D
+POSE_SIZE_ENABLED_BY_DEFAULT = True  # Z toggles experimental pose-size diagnostics
+AUTHENTICITY_ENABLED_BY_DEFAULT = True  # A toggles diagnostic-only motion authenticity
 # WARNING: merely using the same pixel dimensions does NOT register RGB/depth.
 # Keep False until calibrated RGB-to-depth registration is actually verified.
 RGB_DEPTH_ALIGNED = False
@@ -270,10 +276,12 @@ def initialize_modules():
     attention = HeadOrientationTracker()
     motion = HeadMotionTracker()
     depth_detector = DepthDetector()
+    pose_size_analyzer = PoseSizeAnalyzer()
+    authenticity_analyzer = MotionAuthenticityAnalyzer()
     normal_classifier = NormalDriverClassifier()
     strict_classifier = StrictDriverClassifier()
-    return (detector, attention, motion, depth_detector,
-            normal_classifier, strict_classifier)
+    return (detector, attention, motion, depth_detector, pose_size_analyzer,
+            authenticity_analyzer, normal_classifier, strict_classifier)
 
 
 # ============================================================
@@ -456,7 +464,8 @@ def update_display(
     rgb_frame, sensor_frame, sensor_mode, results,
     detector, depth_detector, show_skeleton, head_enabled, motion_enabled,
     rgb_fps, sensor_fps, loop_ms, planes_enabled, invalid_enabled,
-    classification_mode, overlap_enabled
+    classification_mode, overlap_enabled, pose_size_enabled,
+    authenticity_enabled
 ):
     """Draw two panels and display the combined viewer."""
     if rgb_frame is None:
@@ -507,6 +516,38 @@ def update_display(
                 draw_attention_warning(left, attention["direction"])
         else:
             put_label(left, "Head monitor: OFF (H)", 10, 182)
+
+        # Apparent pose size is diagnostic only; not a spoof or liveness verdict.
+        if pose_size_enabled:
+            size = results.get("pose_size") or {}
+            status = size.get("status", "UNKNOWN")
+            status_color = ((0, 110, 255) if status == "TOO_SMALL"
+                            else (0, 210, 255) if status == "UNKNOWN"
+                            else (0, 220, 0))
+            put_label(left, f"Pose size (Z): {status}", 10, 290,
+                      status_color, scale=0.48)
+            shoulder = size.get("shoulder_width")
+            torso = size.get("torso_height")
+            shoulder_text = f"{shoulder:.3f}" if shoulder is not None else "--"
+            torso_text = f"{torso:.3f}" if torso is not None else "--"
+            put_label(left, f"Shoulder fraction: {shoulder_text}",
+                      10, 315, scale=0.46)
+            put_label(left, f"Torso fraction: {torso_text}",
+                      10, 340, scale=0.46)
+        else:
+            put_label(left, "Pose size: OFF (Z)", 10, 290, scale=0.48)
+
+    # Informational evidence only; never changes final driver classifier.
+    if authenticity_enabled:
+        authenticity = results.get("motion_authenticity") or {}
+        authenticity_status = authenticity.get("status", "INSUFFICIENT_DATA")
+        samples = authenticity.get("sample_count", 0)
+        put_label(left, f"Motion authenticity (A): {authenticity_status}",
+                  10, 365, (0, 180, 255), scale=0.44)
+        put_label(left, f"Motion samples: {samples}",
+                  10, 389, scale=0.44)
+    else:
+        put_label(left, "Motion authenticity: OFF (A)", 10, 365, scale=0.44)
 
     if sensor_frame is None:
         right = blank_panel("DEPTH/IR CAMERA: NO FRAME")
@@ -644,6 +685,8 @@ def main():
     attention_tracker = None
     motion_tracker = None
     depth_detector = None
+    pose_size_analyzer = None
+    authenticity_analyzer = None
     normal_classifier = None
     strict_classifier = None
     stream = None
@@ -654,6 +697,8 @@ def main():
     invalid_enabled = INVALID_ENABLED_BY_DEFAULT
     classification_mode = CLASSIFICATION_MODE_BY_DEFAULT
     overlap_enabled = OVERLAP_ENABLED_BY_DEFAULT
+    pose_size_enabled = POSE_SIZE_ENABLED_BY_DEFAULT
+    authenticity_enabled = AUTHENTICITY_ENABLED_BY_DEFAULT
     sensor_mode = DEPTH
 
     rgb_counter = FrameRateCounter()
@@ -664,10 +709,11 @@ def main():
     try:
         cap = initialize_hardware()
         (detector, attention_tracker, motion_tracker, depth_detector,
+         pose_size_analyzer, authenticity_analyzer,
          normal_classifier, strict_classifier) = initialize_modules()
 
         cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
-        print("[Controls] P pose | H head | M motion | S save CSV | F planes | O overlap | N missing | +/- range | D depth | I infrared | C classifier | Q/Esc quit")
+        print("[Controls] P pose | H head | M motion | S save CSV | F planes | O overlap | N missing | Z pose size | A authenticity | +/- range | D depth | I infrared | C classifier | Q/Esc quit")
         print("[Overlap] Diagnostic bounding-box comparison ONLY; RGB/depth registration not verified.")
         print(f"[Classifier] Policy: {classification_mode} (NORMAL preserves UNKNOWN; STRICT rejects it)")
 
@@ -696,6 +742,19 @@ def main():
                     results = process_frames(
                         rgb_frame, detector, attention_tracker, motion_tracker,
                         timestamp_ms, head_enabled, motion_enabled, time.monotonic()
+                    )
+                    # Analyze the same head angle measurements without extra inference.
+                    # Does not alter NORMAL/STRICT spoof or attention decisions.
+                    results["motion_authenticity"] = (
+                        authenticity_analyzer.update(results.get("head_motion"),
+                                                     time.monotonic())
+                        if authenticity_enabled and motion_enabled else None
+                    )
+                    # Pose size is evaluated from the same detected landmarks.
+                    # It remains diagnostic only: classifiers are untouched.
+                    results["pose_size"] = (
+                        pose_size_analyzer.analyze(results.get("landmarks"))
+                        if pose_size_enabled else None
                     )
                     # Analyze depth only in DEPTH mode. An IR frame is not a
                     # point cloud and must not be sent through RANSAC.
@@ -740,7 +799,7 @@ def main():
                         results, detector, depth_detector, show_skeleton, head_enabled,
                         motion_enabled, rgb_counter.fps, sensor_counter.fps, loop_ms,
                         planes_enabled, invalid_enabled, classification_mode,
-                        overlap_enabled
+                        overlap_enabled, pose_size_enabled, authenticity_enabled
                     )
 
                     key = cv2.waitKey(1) & 0xFF
@@ -752,6 +811,13 @@ def main():
                             else "NORMAL"
                         )
                         print(f"[Classifier] Policy switched to: {classification_mode}")
+                    elif key == ord("a"):
+                        authenticity_enabled = not authenticity_enabled
+                        authenticity_analyzer.reset()
+                        print("[Motion authenticity] Diagnostics:", authenticity_enabled)
+                    elif key == ord("z"):
+                        pose_size_enabled = not pose_size_enabled
+                        print("[Pose size] Diagnostics:", pose_size_enabled)
                     elif key == ord("o"):
                         overlap_enabled = not overlap_enabled
                         print("[Overlap] Display:", overlap_enabled)
@@ -765,6 +831,7 @@ def main():
                     elif key == ord("m"):
                         motion_enabled = not motion_enabled
                         motion_tracker.reset()  # new recording on re-enable
+                        authenticity_analyzer.reset()
                         print("[Motion] Measurement:", motion_enabled)
                     elif key == ord("s"):
                         if not motion_tracker.get_measurements():

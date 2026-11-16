@@ -1,5 +1,7 @@
 # Driver Monitoring System — 3D and 2D Analysis
 
+Disclaimer: AI was used to help develop source code files
+
 Research prototype investigating camera-based driver attention and potential presentation-attack indicators using RGB pose landmarks and depth-camera analysis.
 
 Developed by Group 2 for ENGR5510 — Foundations of Software Engineering, Ontario Tech University (2026).
